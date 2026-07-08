@@ -3,6 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Crosshair, PawPrint, Zap, Star } from "lucide-react";
 import { ITEM_IMAGE_BASE } from "@/lib/item-decoder";
+import { FFImage } from "@/components/ff/ff-image";
 
 interface WeaponSkinsProps {
   weaponSkins: Array<{ id: string; image: string; label: string }>;
@@ -30,11 +31,12 @@ export function WeaponSkinsCard({ weaponSkins }: WeaponSkinsProps) {
               className="group relative rounded-xl bg-secondary/40 border border-border/20 p-3 flex flex-col items-center gap-2 card-lift hover:border-ff-red/30 transition-all duration-200"
             >
               <div className="w-full aspect-square flex items-center justify-center">
-                <img
+                <FFImage
                   src={`${ITEM_IMAGE_BASE}/${skin.id}`}
                   alt={`Weapon skin ${skin.id}`}
-                  className="max-w-full max-h-full object-contain drop-shadow-lg group-hover:scale-110 transition-transform duration-300"
-                  loading="lazy"
+                  category="weapon_skin"
+                  label="Weapon"
+                  className="drop-shadow-lg group-hover:scale-110 transition-transform duration-300"
                 />
               </div>
               <p className="text-[10px] font-mono text-muted-foreground/60">
@@ -71,42 +73,39 @@ export function PetCard({ petInfo }: PetInfoProps) {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="flex flex-col sm:flex-row gap-4">
-          {/* Pet */}
-          <div className="flex-1 rounded-xl bg-secondary/40 border border-border/20 p-4 flex flex-col items-center gap-2 card-lift">
-            <div className="w-24 h-24 flex items-center justify-center">
-              <img
-                src={`${ITEM_IMAGE_BASE}/${petInfo.id}`}
-                alt="Pet"
-                className="max-w-full max-h-full object-contain drop-shadow-lg"
-                loading="lazy"
-              />
-            </div>
-            <span className="text-xs text-muted-foreground font-mono">#{petInfo.id}</span>
+        <div className="grid grid-cols-3 gap-3">
+          <div className="flex flex-col items-center gap-2 rounded-xl bg-secondary/40 border border-border/20 p-3 card-lift">
+            <FFImage
+              src={`${ITEM_IMAGE_BASE}/${petInfo.id}`}
+              alt="Pet"
+              category="pet"
+              label="Pet"
+              size="lg"
+              className="drop-shadow-lg"
+            />
+            <span className="text-[10px] text-muted-foreground font-mono">#{petInfo.id}</span>
           </div>
-          {/* Pet Skin */}
-          <div className="flex-1 rounded-xl bg-secondary/40 border border-border/20 p-4 flex flex-col items-center gap-2 card-lift">
-            <div className="w-24 h-24 flex items-center justify-center">
-              <img
-                src={`${ITEM_IMAGE_BASE}/${petInfo.skinId}`}
-                alt="Pet Skin"
-                className="max-w-full max-h-full object-contain drop-shadow-lg"
-                loading="lazy"
-              />
-            </div>
-            <span className="text-xs text-muted-foreground font-mono">Skin #{petInfo.skinId}</span>
+          <div className="flex flex-col items-center gap-2 rounded-xl bg-secondary/40 border border-border/20 p-3 card-lift">
+            <FFImage
+              src={`${ITEM_IMAGE_BASE}/${petInfo.skinId}`}
+              alt="Pet Skin"
+              category="pet_skin"
+              label="Skin"
+              size="lg"
+              className="drop-shadow-lg"
+            />
+            <span className="text-[10px] text-muted-foreground font-mono">Skin #{petInfo.skinId}</span>
           </div>
-          {/* Pet Skill */}
-          <div className="flex-1 rounded-xl bg-secondary/40 border border-border/20 p-4 flex flex-col items-center gap-2 card-lift">
-            <div className="w-24 h-24 flex items-center justify-center">
-              <img
-                src={`${ITEM_IMAGE_BASE}/${petInfo.skillId}`}
-                alt="Pet Skill"
-                className="max-w-full max-h-full object-contain drop-shadow-lg"
-                loading="lazy"
-              />
-            </div>
-            <span className="text-xs text-muted-foreground font-mono">Skill #{petInfo.skillId}</span>
+          <div className="flex flex-col items-center gap-2 rounded-xl bg-secondary/40 border border-border/20 p-3 card-lift">
+            <FFImage
+              src={`${ITEM_IMAGE_BASE}/${petInfo.skillId}`}
+              alt="Pet Skill"
+              category="pet_skill"
+              label="Skill"
+              size="lg"
+              className="drop-shadow-lg"
+            />
+            <span className="text-[10px] text-muted-foreground font-mono">Skill #{petInfo.skillId}</span>
           </div>
         </div>
       </CardContent>
@@ -139,16 +138,17 @@ export function SkillsCard({ skills }: SkillsProps) {
               key={skill.id}
               className="relative rounded-xl bg-secondary/40 border border-border/20 p-3 flex flex-col items-center gap-2 card-lift hover:border-ff-gold/30 transition-all duration-200"
             >
-              {/* Slot indicator */}
               <span className="absolute top-1.5 left-2 text-[9px] font-bold text-muted-foreground/30">
                 SLOT {idx + 1}
               </span>
               <div className="w-16 h-16 sm:w-20 sm:h-20 flex items-center justify-center">
-                <img
+                <FFImage
                   src={`${ITEM_IMAGE_BASE}/${skill.id}`}
                   alt={skill.label}
-                  className="max-w-full max-h-full object-contain drop-shadow-lg hover:scale-110 transition-transform duration-300"
-                  loading="lazy"
+                  category="character_skill"
+                  label={skill.label}
+                  size="lg"
+                  className="drop-shadow-lg hover:scale-110 transition-transform duration-300"
                 />
               </div>
               <p className="text-xs font-semibold text-foreground/90 text-center leading-tight">

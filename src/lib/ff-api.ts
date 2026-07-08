@@ -8,9 +8,12 @@ import { decodeItem, decodeOutfit, getRankInfo, PRIVELEGE_LABELS, REGION_MAP } f
 
 export interface FreeFirePlayerInfo {
   uid: string;
+  userName: string;
   region: string;
   regionName: string;
   accountType: string;
+  level: number;
+  likesCount: number;
   basicInfo: {
     rank: number;
     rankLabel: string;
@@ -62,10 +65,26 @@ export interface FreeFirePlayerInfo {
     mode: string;
     rankShow: string;
   };
+  captainBasicInfo: {
+    uid: string;
+    name: string;
+    bannerId: string;
+    bannerImage: string;
+    headPicId: string;
+    headPicImage: string;
+    titleId: string;
+    titleImage: string;
+    weaponSkinShows: Array<{ id: string; image: string }>;
+    pinId: string;
+    pinImage: string;
+  } | null;
 }
 
 // Mock data based on the DECODE_REPORT.md for uid 2259942102
 const MOCK_PLAYER: Record<string, unknown> = {
+  userName: "DEMONXIIC",
+  level: 78,
+  likesCount: 1243,
   basicInfo: {
     accountType: 1,
     rank: 322,
@@ -121,7 +140,7 @@ function transformPlayerData(raw: Record<string, unknown>, uid: string, region: 
   const petInfo = raw.petInfo as Record<string, unknown> | null;
   const clanInfo = raw.clanBasicInfo as Record<string, unknown> | null;
   const socialInfo = (raw.socialInfo as Record<string, unknown>) || {};
-  const captainInfo = raw.captainBasicInfo as Record<string, unknown> | null;
+  const captainInfoRaw = raw.captainBasicInfo as Record<string, unknown> | null;
 
   const rankId = (basicInfo.rank as number) || 0;
   const csRankId = (basicInfo.csRank as number) || 0;
@@ -196,11 +215,40 @@ function transformPlayerData(raw: Record<string, unknown>, uid: string, region: 
     };
   }
 
+  // Captain info
+  let captainInfo: FreeFirePlayerInfo["captainBasicInfo"] = null;
+  if (captainInfoRaw) {
+    const capBanner = decodeItem(String(captainInfoRaw.bannerId || ""));
+    const capHeadPic = decodeItem(String(captainInfoRaw.headPic || ""));
+    const capTitle = decodeItem(String(captainInfoRaw.title || ""));
+    const capPin = decodeItem(String(captainInfoRaw.pinId || ""));
+    const capWeaponSkins = ((captainInfoRaw.weaponSkinShows as number[]) || []).map((id: number) => {
+      const d = decodeItem(id);
+      return { id: String(id), image: d.imageUrl };
+    });
+    captainInfo = {
+      uid: String(captainInfoRaw.captainUid || captainInfoRaw.uid || ""),
+      name: String(captainInfoRaw.captainName || ""),
+      bannerId: String(captainInfoRaw.bannerId || ""),
+      bannerImage: capBanner.imageUrl,
+      headPicId: String(captainInfoRaw.headPic || ""),
+      headPicImage: capHeadPic.imageUrl,
+      titleId: String(captainInfoRaw.title || ""),
+      titleImage: capTitle.imageUrl,
+      weaponSkinShows: capWeaponSkins,
+      pinId: String(captainInfoRaw.pinId || ""),
+      pinImage: capPin.imageUrl,
+    };
+  }
+
   return {
     uid,
+    userName: String(raw.userName || raw.nickName || raw.nickname || `Player #${uid}`),
     region,
     regionName: REGION_MAP[region] || region,
     accountType: basicInfo.accountType === 1 ? "Standard" : "Guest",
+    level: (raw.level as number) || 0,
+    likesCount: (raw.likesCount as number) || (raw.likeCount as number) || 0,
     basicInfo: {
       rank: rankId,
       rankLabel: rankInfo.tier,
@@ -233,6 +281,7 @@ function transformPlayerData(raw: Record<string, unknown>, uid: string, region: 
     },
     petInfo: petInfoDecoded,
     clanBasicInfo,
+    captainBasicInfo: captainInfo,
     socialInfo: {
       gender: (socialInfo.gender as string) || "Unknown",
       language: (socialInfo.language as string) || "EN",

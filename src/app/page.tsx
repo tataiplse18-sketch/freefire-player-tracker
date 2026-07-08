@@ -20,6 +20,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { ITEM_IMAGE_BASE } from "@/lib/item-decoder";
+import { FFImage } from "@/components/ff/ff-image";
 import type { FreeFirePlayerInfo } from "@/lib/ff-api";
 
 export default function Home() {
@@ -166,10 +167,10 @@ export default function Home() {
               <Card className="border-border/30 bg-card/60">
                 <CardContent className="p-4">
                   <div className="flex flex-wrap items-center justify-center gap-6">
-                    <DecorativeItem label="Badge" id={player.basicInfo.badgeId} />
-                    <DecorativeItem label="Title" id={player.basicInfo.titleId} />
-                    <DecorativeItem label="Head Frame" id={player.basicInfo.headPicId} />
-                    <DecorativeItem label="Pin" id={player.basicInfo.pinId} />
+                    <DecorativeItem label="Badge" id={player.basicInfo.badgeId} category="badge" />
+                    <DecorativeItem label="Title" id={player.basicInfo.titleId} category="title" />
+                    <DecorativeItem label="Head Frame" id={player.basicInfo.headPicId} category="head_frame" />
+                    <DecorativeItem label="Pin" id={player.basicInfo.pinId} category="pin" />
                   </div>
                 </CardContent>
               </Card>
@@ -240,16 +241,17 @@ export default function Home() {
   );
 }
 
-function DecorativeItem({ label, id }: { label: string; id: string }) {
+function DecorativeItem({ label, id, category }: { label: string; id: string; category?: string }) {
   if (!id) return null;
   return (
     <div className="flex flex-col items-center gap-1.5 group">
       <div className="w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center rounded-xl bg-secondary/30 border border-border/10 group-hover:border-ff-orange/20 transition-colors">
-        <img
+        <FFImage
           src={`${ITEM_IMAGE_BASE}/${id}`}
           alt={label}
-          className="max-w-full max-h-full object-contain drop-shadow-md group-hover:scale-110 transition-transform duration-300"
-          loading="lazy"
+          category={category || label.toLowerCase().replace(/ /g, "_")}
+          label={label}
+          className="drop-shadow-md group-hover:scale-110 transition-transform duration-300"
         />
       </div>
       <span className="text-[10px] text-muted-foreground/60 font-medium">{label}</span>
