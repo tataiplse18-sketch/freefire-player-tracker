@@ -134,7 +134,7 @@ const MOCK_PLAYER: Record<string, unknown> = {
   },
 };
 
-function transformPlayerData(raw: Record<string, unknown>, uid: string, region: string): FreeFirePlayerInfo {
+export function transformPlayerData(raw: Record<string, unknown>, uid: string, region: string): FreeFirePlayerInfo {
   const basicInfo = raw.basicInfo as Record<string, unknown>;
   const profileInfo = raw.profileInfo as Record<string, unknown>;
   const petInfo = raw.petInfo as Record<string, unknown> | null;
@@ -363,4 +363,61 @@ export async function fetchItemImage(itemId: string): Promise<{ buffer: ArrayBuf
 // Bulk decode
 export function decodeItems(ids: (string | number)[]) {
   return ids.map((id) => decodeItem(id));
+}
+
+/**
+ * Client-side fetch: tries 3 strategies to get real data
+ * 1. Direct browser fetch to Free Fire API (if CORS allows)
+ * 2. CORS proxy (allorigins)
+ * 3. Return null (caller falls back to mock)
+ */
+export async function fetchPlayerInfoClient(
+  uid: string,
+  region: string = "IND"
+): Promise<{ data: FreeFirePlayerInfo; source: string } | null> {
+  const apiUrl = `https://developers.freefirecommunity.com/api/public/info?region=${region}&uid=${uid}`;
+
+  // Strategy 1: Direct browser fetch
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(apiUrl, {
+      signal: controller.signal,
+      headers: { Accept: "application/json" },
+    });
+    clearTimeout(timeout);
+    if (res.ok) {
+      const json = (await res.json()) as Record<string, unknown>;
+      if (json && json.basicInfo) {
+        return {
+          data: transformPlayerData(json, uid, region),
+          source: "live-browser",
+        };
+      }
+    }
+  } catch {
+    // Direct fetch failed (CORS or network)
+  }
+
+  // Strategy 2: CORS proxy
+  try {
+    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(apiUrl)}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+    const res = await fetch(proxyUrl, { signal: controller.signal });
+    clearTimeout(timeout);
+    if (res.ok) {
+      const json = (await res.json()) as Record<string, unknown>;
+      if (json && json.basicInfo) {
+        return {
+          data: transformPlayerData(json, uid, region),
+          source: "live-proxy",
+        };
+      }
+    }
+  } catch {
+    // Proxy also failed
+  }
+
+  return null;
 }

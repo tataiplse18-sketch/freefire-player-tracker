@@ -21,6 +21,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { ITEM_IMAGE_BASE } from "@/lib/item-decoder";
 import { FFImage } from "@/components/ff/ff-image";
+import { fetchPlayerInfoClient } from "@/lib/ff-api";
 import type { FreeFirePlayerInfo } from "@/lib/ff-api";
 
 export default function Home() {
@@ -28,21 +29,41 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dataSource, setDataSource] = useState<string>("mock");
+  const [fetchStatus, setFetchStatus] = useState<string>("");
 
   const handleSearch = useCallback(async (uid: string, region: string) => {
     setIsLoading(true);
     setError(null);
     setPlayer(null);
+    setFetchStatus("");
 
     try {
+      // Step 1: Try server-side proxy
+      setFetchStatus("Trying server proxy...");
       const res = await fetch(`/api/player?uid=${uid}&region=${region}`);
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Unknown error" }));
         throw new Error(err.error || "Failed to fetch player data");
       }
       const data = await res.json();
+      const source = data._source || "unknown";
+
+      // Step 2: If server returned mock, try client-side direct fetch
+      if (source === "mock") {
+        setFetchStatus("Server blocked, trying browser direct fetch...");
+        const clientResult = await fetchPlayerInfoClient(uid, region);
+        if (clientResult) {
+          setPlayer(clientResult.data);
+          setDataSource(clientResult.source);
+          setFetchStatus(clientResult.source === "live-browser" ? "Live data via browser" : "Live data via proxy");
+          return;
+        }
+        setFetchStatus("All fetch methods blocked in this environment");
+      }
+
       setPlayer(data);
-      setDataSource(data._source || "unknown");
+      setDataSource(source);
+      if (source === "live") setFetchStatus("Live data from server");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -107,6 +128,17 @@ export default function Home() {
             <PlayerSearch onSearch={handleSearch} isLoading={isLoading} />
           </motion.div>
 
+          {/* Fetch status indicator */}
+          {fetchStatus && (
+            <motion.p
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="text-[11px] text-muted-foreground/60"
+            >
+              {fetchStatus}
+            </motion.p>
+          )}
+
           {/* Quick try button */}
           {!player && !isLoading && (
             <motion.button
@@ -114,7 +146,7 @@ export default function Home() {
               animate={{ opacity: 1 }}
               transition={{ delay: 0.3 }}
               onClick={() => handleSearch("2259942102", "IND")}
-              className="text-xs text-muted-foreground/60 hover:text-ff-orange transition-colors cursor-pointer"
+              className="text-xs text-muted-foreground/50 hover:text-ff-orange transition-colors cursor-pointer"
             >
               Try demo: UID 2259942102 (IND) →
             </motion.button>

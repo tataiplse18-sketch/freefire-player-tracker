@@ -39,10 +39,12 @@ export function PlayerProfile({ player, dataSource }: PlayerProfileProps) {
             className={`text-[10px] font-medium ${
               dataSource === "live"
                 ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                : dataSource === "live-browser" || dataSource === "live-proxy"
+                ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
                 : "bg-amber-500/20 text-amber-400 border-amber-500/30"
             }`}
           >
-            {dataSource === "live" ? "LIVE DATA" : "DEMO DATA"}
+            {dataSource === "live" ? "LIVE" : dataSource === "live-browser" ? "LIVE (BROWSER)" : dataSource === "live-proxy" ? "LIVE (PROXY)" : "DEMO"}
           </Badge>
         </div>
       </div>
