@@ -1,8 +1,11 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Flame, ExternalLink, Wifi, WifiOff, Database, Shield, Zap } from "lucide-react";
+import {
+  Flame, ExternalLink, Wifi, WifiOff, Database,
+  Shield, Key, X, CheckCircle2, AlertTriangle, ChevronDown, ChevronUp, Copy, Trash2
+} from "lucide-react";
 import { ThemeToggle } from "@/components/ff/theme-toggle";
 import { PlayerSearch } from "@/components/ff/player-search";
 import { PlayerProfile } from "@/components/ff/player-profile";
@@ -13,25 +16,23 @@ import {
   SkillsCard,
   PrimePrivilegesCard,
 } from "@/components/ff/info-cards";
-import {
-  Card,
-  CardContent,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ITEM_IMAGE_BASE } from "@/lib/item-decoder";
 import { FFImage } from "@/components/ff/ff-image";
 import { fetchPlayerInfoClient } from "@/lib/ff-api";
 import type { FreeFirePlayerInfo } from "@/lib/ff-api";
 
-type DataSource = "live" | "live-browser" | "live-proxy" | "cache" | "mock";
+type DataSource = "live" | "live-browser" | "cache" | "mock";
 
 const SOURCE_CONFIG: Record<DataSource, { label: string; color: string; icon: React.ReactNode; desc: string }> = {
-  live: { label: "LIVE", color: "text-green-400 bg-green-400/10 border-green-400/20", icon: <Wifi className="h-3 w-3" />, desc: "Real-time from server" },
-  "live-browser": { label: "LIVE", color: "text-emerald-400 bg-emerald-400/10 border-emerald-400/20", icon: <Wifi className="h-3 w-3" />, desc: "Real-time from your browser" },
-  "live-proxy": { label: "LIVE", color: "text-teal-400 bg-teal-400/10 border-teal-400/20", icon: <Zap className="h-3 w-3" />, desc: "Real-time via proxy" },
-  cache: { label: "CACHED", color: "text-blue-400 bg-blue-400/10 border-blue-400/20", icon: <Database className="h-3 w-3" />, desc: "From server cache (no API call used)" },
-  mock: { label: "DEMO", color: "text-amber-400 bg-amber-400/10 border-amber-400/20", icon: <Shield className="h-3 w-3" />, desc: "API limit reached — showing sample data" },
+  live: { label: "LIVE", color: "text-green-400 bg-green-400/10 border-green-400/20", icon: <Wifi className="h-3 w-3" />, desc: "Real-time data" },
+  "live-browser": { label: "LIVE", color: "text-emerald-400 bg-emerald-400/10 border-emerald-400/20", icon: <Wifi className="h-3 w-3" />, desc: "Real-time from browser" },
+  cache: { label: "CACHED", color: "text-blue-400 bg-blue-400/10 border-blue-400/20", icon: <Database className="h-3 w-3" />, desc: "Cached (no API call)" },
+  mock: { label: "DEMO", color: "text-amber-400 bg-amber-400/10 border-amber-400/20", icon: <Shield className="h-3 w-3" />, desc: "Sample data" },
 };
 
 export default function Home() {
@@ -40,6 +41,31 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [dataSource, setDataSource] = useState<DataSource>("mock");
   const [statusMessage, setStatusMessage] = useState<string>("");
+  const [apiKey, setApiKey] = useState("");
+  const [showApiKeyInput, setShowApiKeyInput] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
+  const [apiKeySaved, setApiKeySaved] = useState(false);
+
+  // Load API key from localStorage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem("ff_api_key");
+    if (saved) {
+      setApiKey(saved);
+      setApiKeySaved(true);
+    }
+  }, []);
+
+  const saveApiKey = useCallback((key: string) => {
+    if (key.trim()) {
+      localStorage.setItem("ff_api_key", key.trim());
+      setApiKey(key.trim());
+      setApiKeySaved(true);
+    } else {
+      localStorage.removeItem("ff_api_key");
+      setApiKey("");
+      setApiKeySaved(false);
+    }
+  }, []);
 
   const handleSearch = useCallback(async (uid: string, region: string) => {
     setIsLoading(true);
@@ -47,54 +73,42 @@ export default function Home() {
     setPlayer(null);
     setStatusMessage("Connecting...");
 
-    let finalResult: { data: FreeFirePlayerInfo; source: string; message?: string } | null = null;
-
-    // Step 1: Server-side (cache → direct API → mock with message)
     try {
-      setStatusMessage("Checking server cache & API...");
-      const res = await fetch(`/api/player?uid=${uid}&region=${region}`);
-      if (res.ok) {
-        const data = await res.json();
-        const source = data._source as DataSource;
-        const message = data._message as string | null;
-
-        if (source === "live" || source === "cache") {
-          finalResult = { data, source, message: message || undefined };
-        } else if (source === "mock") {
-          // Server got rate limited — try client-side strategies
-          setStatusMessage("Server rate limited. Trying from your browser...");
-          const clientResult = await fetchPlayerInfoClient(uid, region);
-          if (clientResult) {
-            finalResult = clientResult;
-          } else {
-            finalResult = { data, source: "mock", message: message || "All sources exhausted. API daily limit reached on all proxies." };
-          }
-        }
-      } else {
+      setStatusMessage("Fetching from server...");
+      const apiKeyParam = apiKey ? `&apiKey=${encodeURIComponent(apiKey)}` : "";
+      const res = await fetch(`/api/player?uid=${uid}&region=${region}${apiKeyParam}`);
+      if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Unknown error" }));
         throw new Error(err.error || "Server error");
       }
-    } catch (err) {
-      // Server route itself failed — try client direct
-      setStatusMessage("Server failed. Trying from your browser directly...");
-      const clientResult = await fetchPlayerInfoClient(uid, region);
-      if (clientResult) {
-        finalResult = clientResult;
-      } else {
-        setError(err instanceof Error ? err.message : "Could not fetch data from any source");
-        setIsLoading(false);
-        return;
+      const data = await res.json();
+      const source = data._source as DataSource;
+      const message = data._message as string | null;
+
+      if (source === "live" || source === "cache") {
+        setPlayer(data);
+        setDataSource(source);
+        setStatusMessage(message || "");
+      } else if (source === "mock") {
+        // Server failed — try client-side
+        setStatusMessage("Server blocked. Trying browser...");
+        const clientResult = await fetchPlayerInfoClient(uid, region);
+        if (clientResult) {
+          setPlayer(clientResult.data);
+          setDataSource("live-browser");
+          setStatusMessage(clientResult.message || "Live from browser");
+        } else {
+          setPlayer(data);
+          setDataSource("mock");
+          setStatusMessage(message || "API unreachable from all sources");
+        }
       }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not fetch data");
+    } finally {
+      setIsLoading(false);
     }
-
-    if (finalResult) {
-      setPlayer(finalResult.data);
-      setDataSource(finalResult.source as DataSource);
-      setStatusMessage(finalResult.message || "");
-    }
-
-    setIsLoading(false);
-  }, []);
+  }, [apiKey]);
 
   const sourceConfig = SOURCE_CONFIG[dataSource];
   const isLive = dataSource !== "mock";
@@ -119,6 +133,13 @@ export default function Home() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowApiKeyInput(!showApiKeyInput)}
+              className={`p-1.5 rounded-lg transition-colors ${apiKeySaved ? "text-green-400 hover:text-green-300" : "text-muted-foreground hover:text-ff-orange"}`}
+              title={apiKeySaved ? "API Key Active" : "Add API Key"}
+            >
+              <Key className="h-4 w-4" />
+            </button>
             <a
               href="https://developers.freefirecommunity.com"
               target="_blank"
@@ -133,6 +154,99 @@ export default function Home() {
       </header>
 
       <main className="flex-1 max-w-5xl mx-auto w-full px-4 py-8 sm:py-12 space-y-8">
+        {/* API Key Panel */}
+        <AnimatePresence>
+          {showApiKeyInput && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="overflow-hidden"
+            >
+              <Card className="border-ff-orange/20 bg-ff-orange/5">
+                <CardContent className="p-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Key className="h-4 w-4 text-ff-orange" />
+                    <span className="text-sm font-semibold">API Key (FREE — no payment needed)</span>
+                    {apiKeySaved && <CheckCircle2 className="h-3.5 w-3.5 text-green-400" />}
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      type="password"
+                      placeholder="Paste your API key here..."
+                      value={apiKey}
+                      onChange={(e) => setApiKey(e.target.value)}
+                      className="h-10 bg-card/80 border-border/50 text-sm font-mono"
+                    />
+                    <Button
+                      size="sm"
+                      onClick={() => saveApiKey(apiKey)}
+                      className="h-10 px-4 bg-ff-orange hover:bg-ff-orange/90 text-white"
+                    >
+                      Save
+                    </Button>
+                    {apiKey && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => saveApiKey("")}
+                        className="h-10 px-2 text-muted-foreground hover:text-destructive"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground/70">
+                    Get your free key from{" "}
+                    <a
+                      href="https://developers.freefirecommunity.com"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-ff-orange hover:underline"
+                    >
+                      developers.freefirecommunity.com
+                    </a>
+                    {" "}(sign up = free, no card needed). With key: unlimited requests.
+                  </p>
+                  <button
+                    onClick={() => setShowGuide(!showGuide)}
+                    className="flex items-center gap-1 text-[11px] text-ff-orange/80 hover:text-ff-orange transition-colors"
+                  >
+                    {showGuide ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                    {showGuide ? "Hide setup guide" : "How to get free API key"}
+                  </button>
+                  <AnimatePresence>
+                    {showGuide && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="overflow-hidden"
+                      >
+                        <div className="rounded-lg bg-card/60 border border-border/30 p-3 space-y-2 text-[11px] text-muted-foreground/80">
+                          <p className="font-semibold text-foreground/80">Step-by-step:</p>
+                          <ol className="list-decimal list-inside space-y-1.5">
+                            <li>Open <a href="https://developers.freefirecommunity.com" target="_blank" rel="noopener noreferrer" className="text-ff-orange hover:underline">developers.freefirecommunity.com</a></li>
+                            <li>Click <strong>Sign Up</strong> / <strong>Register</strong> (free, no credit card)</li>
+                            <li>After login, go to <strong>Dashboard</strong> or <strong>API Keys</strong> section</li>
+                            <li>Click <strong>&quot;Generate New Key&quot;</strong> or copy your existing key</li>
+                            <li>Paste the key in the input above and click <strong>Save</strong></li>
+                            <li>Done! Now search any player — unlimited requests</li>
+                          </ol>
+                          <div className="flex items-start gap-1.5 pt-1 text-amber-400/80">
+                            <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+                            <p>Without API key: only 5 searches/day (shared). With key: much higher limit.</p>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </CardContent>
+              </Card>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Hero + Search */}
         <div className="text-center space-y-6">
           <motion.div
@@ -165,10 +279,7 @@ export default function Home() {
                 exit={{ opacity: 0 }}
                 className="flex items-center justify-center gap-2"
               >
-                <Badge
-                  variant="outline"
-                  className={`gap-1.5 text-[11px] px-3 py-1 font-semibold ${sourceConfig.color}`}
-                >
+                <Badge variant="outline" className={`gap-1.5 text-[11px] px-3 py-1 font-semibold ${sourceConfig.color}`}>
                   {sourceConfig.icon}
                   {sourceConfig.label}
                 </Badge>
@@ -180,7 +291,6 @@ export default function Home() {
             )}
           </AnimatePresence>
 
-          {/* Loading status */}
           {isLoading && (
             <motion.p
               initial={{ opacity: 0 }}
@@ -206,11 +316,7 @@ export default function Home() {
 
         {/* Loading Skeleton */}
         {isLoading && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="space-y-6"
-          >
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
             <Skeleton className="h-60 w-full rounded-2xl" />
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
               {[...Array(6)].map((_, i) => (
@@ -232,7 +338,7 @@ export default function Home() {
               transition={{ duration: 0.4 }}
               className="space-y-6"
             >
-              {/* Mock data warning banner */}
+              {/* Mock data warning */}
               {!isLive && (
                 <motion.div
                   initial={{ opacity: 0, height: 0 }}
@@ -240,11 +346,18 @@ export default function Home() {
                   className="rounded-xl border border-amber-400/20 bg-amber-400/5 p-3 flex items-start gap-2.5"
                 >
                   <WifiOff className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
-                  <div className="text-xs text-amber-400/90 space-y-0.5">
+                  <div className="text-xs text-amber-400/90 space-y-1">
                     <p className="font-semibold">Showing Demo Data</p>
                     <p className="text-amber-400/70">
-                      {statusMessage || "Free Fire API daily limit reached on this server. Each user gets 5 free requests/day from their own IP — try again later or from a different network."}
+                      {statusMessage || "API limit reached. Click the key icon in header to add a FREE API key for unlimited live data."}
                     </p>
+                    <button
+                      onClick={() => setShowApiKeyInput(true)}
+                      className="inline-flex items-center gap-1 text-amber-400 hover:text-amber-300 font-medium"
+                    >
+                      <Key className="h-3 w-3" />
+                      Add Free API Key
+                    </button>
                   </div>
                 </motion.div>
               )}
@@ -264,14 +377,12 @@ export default function Home() {
                 </CardContent>
               </Card>
 
-              {/* Two-column layout for larger screens */}
+              {/* Two-column layout */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Left Column */}
                 <div className="space-y-6">
                   <OutfitGrid clothes={player.profileInfo.clothes} />
                   <PetCard petInfo={player.petInfo} />
                 </div>
-                {/* Right Column */}
                 <div className="space-y-6">
                   <SkillsCard skills={player.profileInfo.equippedSkills} />
                   <WeaponSkinsCard weaponSkins={player.basicInfo.weaponSkinShows} />
@@ -284,18 +395,12 @@ export default function Home() {
               {/* Technical Info */}
               <Card className="border-border/20 bg-card/40">
                 <CardContent className="p-4">
-                  <div className="flex items-start gap-2 text-[11px] text-muted-foreground/50">
-                    <div className="space-y-1">
-                      <p>
-                        Item images sourced from{" "}
-                        <span className="text-ff-orange/70">ffitems.devhubx.org</span>. Player data from{" "}
-                        <span className="text-ff-orange/70">Free Fire Community API</span>.
-                      </p>
-                      <p>
-                        Resource ID prefixes: 203/204/205/211/214 = clothing, 907/912 = weapon skins,
-                        130 = pet, 102 = avatar, 1001 = badge, 904 = title, 902 = head frame, 910 = pin.
-                      </p>
-                    </div>
+                  <div className="text-[11px] text-muted-foreground/50 space-y-1">
+                    <p>
+                      Images: <span className="text-ff-orange/70">ffitems.devhubx.org</span> | 
+                      Data: <span className="text-ff-orange/70">Free Fire Community API</span> | 
+                      ID prefixes: 203-214=clothing, 907/912=weapon skins, 130=pet, 102=avatar
+                    </p>
                   </div>
                 </CardContent>
               </Card>
@@ -307,19 +412,11 @@ export default function Home() {
       {/* Footer */}
       <footer className="mt-auto border-t border-border/20">
         <div className="max-w-5xl mx-auto px-4 py-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] text-muted-foreground/40">
-          <p>
-            FF Tracker — Built for the Free Fire community. Not affiliated with Garena.
-          </p>
+          <p>FF Tracker — Built for the Free Fire community. Not affiliated with Garena.</p>
           <div className="flex items-center gap-3">
-            <Badge variant="outline" className="text-[10px] border-border/20 text-muted-foreground/40 h-5 px-1.5">
-              Next.js 16
-            </Badge>
-            <Badge variant="outline" className="text-[10px] border-border/20 text-muted-foreground/40 h-5 px-1.5">
-              Tailwind CSS
-            </Badge>
-            <Badge variant="outline" className="text-[10px] border-border/20 text-muted-foreground/40 h-5 px-1.5">
-              shadcn/ui
-            </Badge>
+            <Badge variant="outline" className="text-[10px] border-border/20 text-muted-foreground/40 h-5 px-1.5">Next.js 16</Badge>
+            <Badge variant="outline" className="text-[10px] border-border/20 text-muted-foreground/40 h-5 px-1.5">Tailwind CSS</Badge>
+            <Badge variant="outline" className="text-[10px] border-border/20 text-muted-foreground/40 h-5 px-1.5">shadcn/ui</Badge>
           </div>
         </div>
       </footer>

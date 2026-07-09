@@ -7,6 +7,7 @@ export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const uid = searchParams.get("uid");
   const region = searchParams.get("region") || "IND";
+  const apiKey = searchParams.get("apiKey") || undefined;
 
   if (!uid || !/^\d+$/.test(uid)) {
     return NextResponse.json(
@@ -16,7 +17,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const { data, source, message } = await fetchPlayerInfo(uid, region);
+    const { data, source, message } = await fetchPlayerInfo(uid, region, apiKey);
     return NextResponse.json({
       ...data,
       _source: source,

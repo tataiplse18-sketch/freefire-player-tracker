@@ -1,13 +1,11 @@
 /**
  * Free Fire API Client
- * Multi-strategy fetching with aggressive caching
  * 
  * Strategy order:
  * 1. Server cache (6hr TTL) — zero API calls
- * 2. Server direct API call (public endpoint)
- * 3. Client browser direct (each user has own IP = own 5/day)
- * 4. Client CORS proxy rotation (multiple proxies = distributed limits)
- * 5. Mock fallback (only when everything fails)
+ * 2. API key endpoint (if key provided) — unlimited
+ * 3. Public endpoint (5/day per IP) — limited
+ * 4. Mock fallback (only when everything fails)
  */
 
 import { decodeItem, decodeOutfit, getRankInfo, PRIVELEGE_LABELS, REGION_MAP } from "./item-decoder";
@@ -108,24 +106,17 @@ function getFromCache(uid: string, region: string): FreeFirePlayerInfo | null {
   if (entry && Date.now() - entry.timestamp < CACHE_TTL) {
     return entry.data;
   }
-  if (entry) {
-    serverCache.delete(key); // expired
-  }
+  if (entry) serverCache.delete(key);
   return null;
 }
 
 function setCache(uid: string, region: string, data: FreeFirePlayerInfo) {
-  const key = getCacheKey(uid, region);
-  serverCache.set(key, { data, timestamp: Date.now() });
+  serverCache.set(getCacheKey(uid, region), { data, timestamp: Date.now() });
 }
 
-// ─── CORS PROXY LIST ────────────────────────────────────────────
+// ─── API ENDPOINTS ──────────────────────────────────────────────
 
-const CORS_PROXIES = [
-  (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-  (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-  (url: string) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
-];
+const API_BASE = "https://developers.freefirecommunity.com";
 
 // ─── MOCK DATA ──────────────────────────────────────────────────
 
@@ -333,83 +324,129 @@ export function transformPlayerData(raw: Record<string, unknown>, uid: string, r
   };
 }
 
-// ─── SERVER-SIDE FETCH (with cache) ─────────────────────────────
+// ─── HELPER: try fetch with error details ───────────────────────
 
-export async function fetchPlayerInfo(
-  uid: string,
-  region: string = "IND"
-): Promise<{ data: FreeFirePlayerInfo; source: string; message?: string }> {
-  // 1. Check cache first
-  const cached = getFromCache(uid, region);
-  if (cached) {
-    return {
-      data: cached,
-      source: "cache",
-      message: `Cached data (${Math.round((CACHE_TTL - (Date.now() - (serverCache.get(getCacheKey(uid, region))?.timestamp || 0))) / 60000)}min remaining)`,
-    };
-  }
+interface FetchResult {
+  ok: boolean;
+  status: number;
+  data: Record<string, unknown> | null;
+  error?: string;
+}
 
-  // 2. Try direct server-side API call
-  const apiUrl = `https://developers.freefirecommunity.com/api/public/info?region=${region}&uid=${uid}`;
-
+async function tryFetch(url: string, headers: Record<string, string>, timeoutMs = 8000): Promise<FetchResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-
-    const response = await fetch(apiUrl, {
+    const res = await fetch(url, {
       signal: controller.signal,
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
         Accept: "application/json",
-        Referer: "https://developers.freefirecommunity.com/",
-        Origin: "https://developers.freefirecommunity.com",
+        ...headers,
       },
     });
-
     clearTimeout(timeout);
 
-    if (response.ok) {
-      const data = (await response.json()) as Record<string, unknown>;
-      if (data && data.basicInfo) {
-        const result = transformPlayerData(data, uid, region);
-        setCache(uid, region, result);
-        return { data: result, source: "live" };
-      }
+    if (res.ok) {
+      const data = (await res.json()) as Record<string, unknown>;
+      return { ok: true, status: res.status, data };
     }
 
-    // If 429, return helpful message
-    if (response.status === 429) {
-      const errBody = await response.json().catch(() => ({})) as Record<string, unknown>;
-      const retryAfter = (errBody.retryAfter as number) || 0;
-      const hours = Math.ceil(retryAfter / 3600);
-      return {
-        data: transformPlayerData(MOCK_PLAYER, uid, region),
-        source: "mock",
-        message: `API limit reached. Resets in ~${hours}h. Try from browser (different IP).`,
-      };
-    }
-  } catch {
-    // Server fetch failed
+    // Try to read error body
+    let error = `HTTP ${res.status}`;
+    try {
+      const errBody = (await res.json()) as Record<string, unknown>;
+      error = String(errBody.message || errBody.error || error);
+    } catch { /* ignore parse error */ }
+
+    return { ok: false, status: res.status, data: null, error };
+  } catch (err) {
+    clearTimeout(timeout);
+    return { ok: false, status: 0, data: null, error: err instanceof Error ? err.message : "Network error" };
+  }
+}
+
+// ─── SERVER-SIDE FETCH (with cache + API key support) ───────────
+
+export async function fetchPlayerInfo(
+  uid: string,
+  region: string = "IND",
+  apiKey?: string
+): Promise<{ data: FreeFirePlayerInfo; source: string; message?: string }> {
+
+  // 1. Check cache first
+  const cached = getFromCache(uid, region);
+  if (cached) {
+    const entry = serverCache.get(getCacheKey(uid, region));
+    const remaining = entry ? Math.round((CACHE_TTL - (Date.now() - entry.timestamp)) / 60000) : 0;
+    return {
+      data: cached,
+      source: "cache",
+      message: `Cached (${remaining}min left, no API call used)`,
+    };
   }
 
-  // 3. Mock fallback
+  // 2. If API key provided, try gated endpoints first
+  if (apiKey) {
+    // Try with Authorization header
+    const keyedEndpoints = [
+      // Try /api/info with Bearer token
+      `${API_BASE}/api/info?region=${region}&uid=${uid}`,
+      // Try /api/stats with Bearer token
+      `${API_BASE}/api/stats?region=${region}&uid=${uid}`,
+      // Try public endpoint with key as query param
+      `${API_BASE}/api/public/info?region=${region}&uid=${uid}&key=${apiKey}`,
+    ];
+
+    const authHeaders = [
+      { Authorization: `Bearer ${apiKey}` },
+      { "x-api-key": apiKey },
+      { Authorization: `Api-Key ${apiKey}` },
+    ];
+
+    for (const url of keyedEndpoints) {
+      for (const headers of authHeaders) {
+        const result = await tryFetch(url, headers);
+        if (result.ok && result.data && result.data.basicInfo) {
+          const transformed = transformPlayerData(result.data, uid, region);
+          setCache(uid, region, transformed);
+          return { data: transformed, source: "live", message: "Live data via API key" };
+        }
+      }
+    }
+  }
+
+  // 3. Try public endpoint (5/day limit)
+  const publicUrl = `${API_BASE}/api/public/info?region=${region}&uid=${uid}`;
+  const pubResult = await tryFetch(publicUrl, {
+    Referer: "https://developers.freefirecommunity.com/",
+    Origin: "https://developers.freefirecommunity.com",
+  });
+
+  if (pubResult.ok && pubResult.data && pubResult.data.basicInfo) {
+    const transformed = transformPlayerData(pubResult.data, uid, region);
+    setCache(uid, region, transformed);
+    return { data: transformed, source: "live", message: "Live data (public endpoint)" };
+  }
+
+  // 4. Mock fallback with clear reason
+  const reason = pubResult.error || "Unknown error";
   return {
     data: transformPlayerData(MOCK_PLAYER, uid, region),
     source: "mock",
-    message: "Server could not reach API. Browser will try directly from your IP.",
+    message: `API Error: ${reason}. Add a free API key for unlimited access.`,
   };
 }
 
-// ─── CLIENT-SIDE FETCH (multi-strategy) ─────────────────────────
-// This runs in the browser — each user has their OWN IP = own 5/day limit!
+// ─── CLIENT-SIDE FETCH ──────────────────────────────────────────
 
 export async function fetchPlayerInfoClient(
   uid: string,
   region: string = "IND"
 ): Promise<{ data: FreeFirePlayerInfo; source: string; message?: string } | null> {
-  const apiUrl = `https://developers.freefirecommunity.com/api/public/info?region=${region}&uid=${uid}`;
+  const apiUrl = `${API_BASE}/api/public/info?region=${region}&uid=${uid}`;
 
-  // Strategy 1: Direct browser fetch (user's own IP = own 5/day)
+  // Direct browser fetch
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
@@ -421,41 +458,11 @@ export async function fetchPlayerInfoClient(
     if (res.ok) {
       const json = (await res.json()) as Record<string, unknown>;
       if (json && json.basicInfo) {
-        return {
-          data: transformPlayerData(json, uid, region),
-          source: "live-browser",
-          message: "Live data from your browser",
-        };
+        return { data: transformPlayerData(json, uid, region), source: "live-browser", message: "Live from browser" };
       }
-    }
-    if (res.status === 429) {
-      // Rate limited on browser too, try proxies
     }
   } catch {
-    // CORS blocked, try proxies
-  }
-
-  // Strategy 2: Rotate through CORS proxies (each has own 5/day)
-  for (let i = 0; i < CORS_PROXIES.length; i++) {
-    const proxyUrl = CORS_PROXIES[i](apiUrl);
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10000);
-      const res = await fetch(proxyUrl, { signal: controller.signal });
-      clearTimeout(timeout);
-      if (res.ok) {
-        const json = (await res.json()) as Record<string, unknown>;
-        if (json && json.basicInfo) {
-          return {
-            data: transformPlayerData(json, uid, region),
-            source: "live-proxy",
-            message: `Live data via proxy #${i + 1}`,
-          };
-        }
-      }
-    } catch {
-      // This proxy failed, try next
-    }
+    // CORS blocked — expected
   }
 
   return null;
@@ -465,29 +472,20 @@ export async function fetchPlayerInfoClient(
 
 export async function fetchItemImage(itemId: string): Promise<{ buffer: ArrayBuffer; contentType: string } | null> {
   const imageUrl = `https://ffitems.devhubx.org/items/${itemId}`;
-
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
-
     const response = await fetch(imageUrl, {
       signal: controller.signal,
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-      },
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
     });
-
     clearTimeout(timeout);
-
     if (response.ok) {
       const buffer = await response.arrayBuffer();
       const contentType = response.headers.get("content-type") || "image/png";
       return { buffer, contentType };
     }
-  } catch {
-    // Image CDN unavailable
-  }
-
+  } catch { /* Image CDN unavailable */ }
   return null;
 }
 
