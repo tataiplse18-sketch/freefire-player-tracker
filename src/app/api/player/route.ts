@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchPlayerInfo } from "@/lib/ff-api";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const uid = searchParams.get("uid");
@@ -14,8 +16,12 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const { data, source } = await fetchPlayerInfo(uid, region);
-    return NextResponse.json({ ...data, _source: source });
+    const { data, source, message } = await fetchPlayerInfo(uid, region);
+    return NextResponse.json({
+      ...data,
+      _source: source,
+      _message: message || null,
+    });
   } catch (err) {
     return NextResponse.json(
       { error: "Failed to fetch player data. Please try again." },

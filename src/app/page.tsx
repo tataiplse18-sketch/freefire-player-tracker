@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Flame, Github, Info, ExternalLink } from "lucide-react";
+import { Flame, ExternalLink, Wifi, WifiOff, Database, Shield, Zap } from "lucide-react";
 import { ThemeToggle } from "@/components/ff/theme-toggle";
 import { PlayerSearch } from "@/components/ff/player-search";
 import { PlayerProfile } from "@/components/ff/player-profile";
@@ -24,52 +24,80 @@ import { FFImage } from "@/components/ff/ff-image";
 import { fetchPlayerInfoClient } from "@/lib/ff-api";
 import type { FreeFirePlayerInfo } from "@/lib/ff-api";
 
+type DataSource = "live" | "live-browser" | "live-proxy" | "cache" | "mock";
+
+const SOURCE_CONFIG: Record<DataSource, { label: string; color: string; icon: React.ReactNode; desc: string }> = {
+  live: { label: "LIVE", color: "text-green-400 bg-green-400/10 border-green-400/20", icon: <Wifi className="h-3 w-3" />, desc: "Real-time from server" },
+  "live-browser": { label: "LIVE", color: "text-emerald-400 bg-emerald-400/10 border-emerald-400/20", icon: <Wifi className="h-3 w-3" />, desc: "Real-time from your browser" },
+  "live-proxy": { label: "LIVE", color: "text-teal-400 bg-teal-400/10 border-teal-400/20", icon: <Zap className="h-3 w-3" />, desc: "Real-time via proxy" },
+  cache: { label: "CACHED", color: "text-blue-400 bg-blue-400/10 border-blue-400/20", icon: <Database className="h-3 w-3" />, desc: "From server cache (no API call used)" },
+  mock: { label: "DEMO", color: "text-amber-400 bg-amber-400/10 border-amber-400/20", icon: <Shield className="h-3 w-3" />, desc: "API limit reached — showing sample data" },
+};
+
 export default function Home() {
   const [player, setPlayer] = useState<FreeFirePlayerInfo | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [dataSource, setDataSource] = useState<string>("mock");
-  const [fetchStatus, setFetchStatus] = useState<string>("");
+  const [dataSource, setDataSource] = useState<DataSource>("mock");
+  const [statusMessage, setStatusMessage] = useState<string>("");
 
   const handleSearch = useCallback(async (uid: string, region: string) => {
     setIsLoading(true);
     setError(null);
     setPlayer(null);
-    setFetchStatus("");
+    setStatusMessage("Connecting...");
 
+    let finalResult: { data: FreeFirePlayerInfo; source: string; message?: string } | null = null;
+
+    // Step 1: Server-side (cache → direct API → mock with message)
     try {
-      // Step 1: Try server-side proxy
-      setFetchStatus("Trying server proxy...");
+      setStatusMessage("Checking server cache & API...");
       const res = await fetch(`/api/player?uid=${uid}&region=${region}`);
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Unknown error" }));
-        throw new Error(err.error || "Failed to fetch player data");
-      }
-      const data = await res.json();
-      const source = data._source || "unknown";
+      if (res.ok) {
+        const data = await res.json();
+        const source = data._source as DataSource;
+        const message = data._message as string | null;
 
-      // Step 2: If server returned mock, try client-side direct fetch
-      if (source === "mock") {
-        setFetchStatus("Server blocked, trying browser direct fetch...");
-        const clientResult = await fetchPlayerInfoClient(uid, region);
-        if (clientResult) {
-          setPlayer(clientResult.data);
-          setDataSource(clientResult.source);
-          setFetchStatus(clientResult.source === "live-browser" ? "Live data via browser" : "Live data via proxy");
-          return;
+        if (source === "live" || source === "cache") {
+          finalResult = { data, source, message: message || undefined };
+        } else if (source === "mock") {
+          // Server got rate limited — try client-side strategies
+          setStatusMessage("Server rate limited. Trying from your browser...");
+          const clientResult = await fetchPlayerInfoClient(uid, region);
+          if (clientResult) {
+            finalResult = clientResult;
+          } else {
+            finalResult = { data, source: "mock", message: message || "All sources exhausted. API daily limit reached on all proxies." };
+          }
         }
-        setFetchStatus("All fetch methods blocked in this environment");
+      } else {
+        const err = await res.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(err.error || "Server error");
       }
-
-      setPlayer(data);
-      setDataSource(source);
-      if (source === "live") setFetchStatus("Live data from server");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
-    } finally {
-      setIsLoading(false);
+      // Server route itself failed — try client direct
+      setStatusMessage("Server failed. Trying from your browser directly...");
+      const clientResult = await fetchPlayerInfoClient(uid, region);
+      if (clientResult) {
+        finalResult = clientResult;
+      } else {
+        setError(err instanceof Error ? err.message : "Could not fetch data from any source");
+        setIsLoading(false);
+        return;
+      }
     }
+
+    if (finalResult) {
+      setPlayer(finalResult.data);
+      setDataSource(finalResult.source as DataSource);
+      setStatusMessage(finalResult.message || "");
+    }
+
+    setIsLoading(false);
   }, []);
+
+  const sourceConfig = SOURCE_CONFIG[dataSource];
+  const isLive = dataSource !== "mock";
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -128,28 +156,40 @@ export default function Home() {
             <PlayerSearch onSearch={handleSearch} isLoading={isLoading} />
           </motion.div>
 
-          {/* Fetch status indicator */}
-          {fetchStatus && (
+          {/* Status indicator */}
+          <AnimatePresence>
+            {statusMessage && player && (
+              <motion.div
+                initial={{ opacity: 0, y: -5 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                className="flex items-center justify-center gap-2"
+              >
+                <Badge
+                  variant="outline"
+                  className={`gap-1.5 text-[11px] px-3 py-1 font-semibold ${sourceConfig.color}`}
+                >
+                  {sourceConfig.icon}
+                  {sourceConfig.label}
+                </Badge>
+                <span className="text-[11px] text-muted-foreground/60">
+                  {sourceConfig.desc}
+                  {statusMessage && ` — ${statusMessage}`}
+                </span>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Loading status */}
+          {isLoading && (
             <motion.p
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              className="text-[11px] text-muted-foreground/60"
+              className="text-[11px] text-muted-foreground/60 flex items-center justify-center gap-2"
             >
-              {fetchStatus}
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-ff-orange animate-pulse" />
+              {statusMessage}
             </motion.p>
-          )}
-
-          {/* Quick try button */}
-          {!player && !isLoading && (
-            <motion.button
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.3 }}
-              onClick={() => handleSearch("2259942102", "IND")}
-              className="text-xs text-muted-foreground/50 hover:text-ff-orange transition-colors cursor-pointer"
-            >
-              Try demo: UID 2259942102 (IND) →
-            </motion.button>
           )}
         </div>
 
@@ -192,6 +232,23 @@ export default function Home() {
               transition={{ duration: 0.4 }}
               className="space-y-6"
             >
+              {/* Mock data warning banner */}
+              {!isLive && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  className="rounded-xl border border-amber-400/20 bg-amber-400/5 p-3 flex items-start gap-2.5"
+                >
+                  <WifiOff className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
+                  <div className="text-xs text-amber-400/90 space-y-0.5">
+                    <p className="font-semibold">Showing Demo Data</p>
+                    <p className="text-amber-400/70">
+                      {statusMessage || "Free Fire API daily limit reached on this server. Each user gets 5 free requests/day from their own IP — try again later or from a different network."}
+                    </p>
+                  </div>
+                </motion.div>
+              )}
+
               {/* Profile Card */}
               <PlayerProfile player={player} dataSource={dataSource} />
 
@@ -228,18 +285,15 @@ export default function Home() {
               <Card className="border-border/20 bg-card/40">
                 <CardContent className="p-4">
                   <div className="flex items-start gap-2 text-[11px] text-muted-foreground/50">
-                    <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
                     <div className="space-y-1">
                       <p>
                         Item images sourced from{" "}
-                        <span className="text-ff-orange/70">ffitems.devhubx.org</span> (Garena
-                        asset CDN mirror). Player data from{" "}
+                        <span className="text-ff-orange/70">ffitems.devhubx.org</span>. Player data from{" "}
                         <span className="text-ff-orange/70">Free Fire Community API</span>.
                       </p>
                       <p>
-                        All decoded resource IDs are mapped to their visual assets.
-                        IDs prefixed with 203/204/205/211/214 = clothing, 907/912 =
-                        weapon skins, 130 = pet, 102 = avatar, etc.
+                        Resource ID prefixes: 203/204/205/211/214 = clothing, 907/912 = weapon skins,
+                        130 = pet, 102 = avatar, 1001 = badge, 904 = title, 902 = head frame, 910 = pin.
                       </p>
                     </div>
                   </div>
